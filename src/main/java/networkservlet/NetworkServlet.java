@@ -36,8 +36,8 @@ import javax.servlet.http.HttpServletResponse;
 
 public class NetworkServlet extends HttpServlet {
 
-    static final String NETWORK_PAGE = "bitbucket.plugin.network";
-    static final String NETWORK_PAGE_FRAGMENT = "bitbucket.plugin.network_fragment";
+    private static final String NETWORK_PAGE = "bitbucket.plugin.network";
+    private static final String NETWORK_PAGE_FRAGMENT = "bitbucket.plugin.network_fragment";
 
     private final RepositoryService repositoryService;
     private final CommitEnricher commitEnricher;
@@ -62,7 +62,7 @@ public class NetworkServlet extends HttpServlet {
         // Get repoSlug from path
         String pathInfo = req.getPathInfo();
         String[] components = pathInfo.split("/");
-        Boolean contentsOnly = !(req.getParameter("contentsOnly") == null);
+        Boolean contentsOnly = req.getParameter("contentsOnly") != null;
         String pageStr = req.getParameter("page");
         Integer page = Math.max(Integer.parseInt(pageStr == null ? "0" : pageStr), 1) - 1;
         final Integer limit = 50;
@@ -94,68 +94,70 @@ public class NetworkServlet extends HttpServlet {
     protected Map<String, List<Ref>> getLabels(Repository repository) throws IOException {
         final Map<String, List<Ref>> labels = new HashMap<>();
         SingleLineOutputHandler sloh = new SingleLineOutputHandler();
-        GitScmCommandBuilder showRef = gitScm.getCommandBuilderFactory().builder( repository ).command("show-ref");
-        showRef.argumentAt(0, "--heads" );
-        showRef.argumentAt(1, "--tags" );
+        GitScmCommandBuilder showRef = gitScm.getCommandBuilderFactory().builder(repository).command("show-ref");
+        showRef.argumentAt(0, "--heads");
+        showRef.argumentAt(1, "--tags");
         showRef.argumentAt(2, "--dereference");
         GitCommand<String> showRefCmd = showRef.build(sloh);
         String result = showRefCmd.synchronous().call();
-        if (result != null) {
-            StringReader r = new StringReader(result);
-            BufferedReader br = new BufferedReader(r);
-            String line;
+        if (result == null) {
+            return labels;
+        }
 
-            // Loop through 1st time to construct ArrayLists.
-            while ((line = br.readLine()) != null) {
-                if (line.length() > 40) {
-                    String hash = line.substring(0, 40);
-                    labels.put(hash, new ArrayList<>());
-                }
+        StringReader r = new StringReader(result);
+        BufferedReader br = new BufferedReader(r);
+        String line;
+
+        // Loop through 1st time to construct ArrayLists.
+        while ((line = br.readLine()) != null) {
+            if (line.length() > 40) {
+                String hash = line.substring(0, 40);
+                labels.put(hash, new ArrayList<>());
             }
+        }
 
-            // Loop through a 2nd time to fill them.
-            r = new StringReader(result);
-            br = new BufferedReader(r);
-            while ((line = br.readLine()) != null) {
-                if (line.length() > 40) {
-                    Ref ref;
-                    String hash = line.substring(0, 40);
-                    String id = line.substring(41).trim();
-                    if (id.endsWith("^{}")) {
-                        id = id.substring(0, id.length() - 3);
-                    }
-                    if (id.startsWith("refs/tags/")) {
-                        String displayId = id.substring("refs/tags/".length());
-                        ref = new SimpleTag.Builder().hash(hash).displayId(displayId).id(id).latestCommit(hash).build();
-                    } else {
-                        String displayId = id.substring("refs/heads/".length());
-                        ref = new SimpleBranch.Builder().displayId(displayId).id(id).latestCommit(hash).build();
-                    }
-                    labels.get(hash).add(ref);
+        // Loop through a 2nd time to fill them.
+        r = new StringReader(result);
+        br = new BufferedReader(r);
+        while ((line = br.readLine()) != null) {
+            if (line.length() > 40) {
+                Ref ref;
+                String hash = line.substring(0, 40);
+                String id = line.substring(41).trim();
+                if (id.endsWith("^{}")) {
+                    id = id.substring(0, id.length() - 3);
                 }
+                if (id.startsWith("refs/tags/")) {
+                    String displayId = id.substring("refs/tags/".length());
+                    ref = new SimpleTag.Builder().hash(hash).displayId(displayId).id(id).latestCommit(hash).build();
+                } else {
+                    String displayId = id.substring("refs/heads/".length());
+                    ref = new SimpleBranch.Builder().displayId(displayId).id(id).latestCommit(hash).build();
+                }
+                labels.get(hash).add(ref);
             }
         }
         return labels;
     }
 
     protected Page<Commit> getCommits(final Repository repository,
-                                            final Integer limit,
-                                            final Integer offset) {
-        PageRequest pr = new PageRequestImpl( offset, limit );
-        pr = pr.buildRestrictedPageRequest( 50 );
-        CommitsCommandParameters ccp = new CommitsCommandParameters.Builder().all( true ).build();
-        PagedCommitOutputHandler pcoh = new PagedCommitOutputHandler( repository, ccp, pr );
+                                      final Integer limit,
+                                      final Integer offset) {
+        PageRequest pr = new PageRequestImpl(offset, limit);
+        pr = pr.buildRestrictedPageRequest(50);
+        CommitsCommandParameters ccp = new CommitsCommandParameters.Builder().all(true).build();
+        PagedCommitOutputHandler pcoh = new PagedCommitOutputHandler(repository, ccp, pr);
         GitScmCommandBuilder revList = gitScm.getCommandBuilderFactory().builder(repository).command("rev-list");
-        revList.argumentAt(0, "--pretty=" + pcoh.getCommitReader().getFormat() );
-        revList.argumentAt(1, "--branches=*" );
-        revList.argumentAt(2, "--tags=*" );
-        revList.argumentAt(3, "--topo-order" );
+        revList.argumentAt(0, "--pretty=" + pcoh.getCommitReader().getFormat());
+        revList.argumentAt(1, "--branches=*");
+        revList.argumentAt(2, "--tags=*");
+        revList.argumentAt(3, "--date-order");
         GitCommand<Page<Commit>> revListCmd = revList.build(pcoh);
         Page<Commit> commits = revListCmd.synchronous().call();
-        if ( commits == null ) {
-            commits = PageUtils.createEmptyPage( pr );
+        if (commits == null) {
+            commits = PageUtils.createEmptyPage(pr);
         } else {
-            commits = commitEnricher.enrichPage(repository, commits, Collections.<String>emptySet());
+            commits = commitEnricher.enrichPage(repository, commits, Collections.emptySet());
         }
         return commits;
     }
@@ -164,10 +166,10 @@ public class NetworkServlet extends HttpServlet {
         resp.setContentType("text/html;charset=UTF-8");
         try {
             soyTemplateRenderer.render(
-                resp.getWriter(),
-                "com.plugin.commitgraph.commitgraph:network-soy-templates",
-                templateName,
-                data
+                    resp.getWriter(),
+                    "com.plugin.commitgraph.commitgraph:network-soy-templates",
+                    templateName,
+                    data
             );
         } catch (SoyException e) {
             Throwable cause = e.getCause();

@@ -32,6 +32,7 @@ public class PagedCommitOutputHandler extends LineReaderOutputHandler implements
 		commitReaderSettingsBuilder.withMessages(parameters.isWithMessages());
 		this.commitReader = new CommitReader( commitReaderSettingsBuilder.build() )
 		{
+		    @Override
 			protected void ping()
 			{
 				PagedCommitOutputHandler.this.resetWatchdog();
@@ -60,15 +61,7 @@ public class PagedCommitOutputHandler extends LineReaderOutputHandler implements
 	protected void processReader( LineReader reader ) throws IOException
 	{
 		int count = 0;
-
-		while ( true )
-		{
-			Commit commit = readCommit( reader );
-			if ( commit == null )
-			{
-				break;
-			}
-
+        for (Commit commit = readCommit( reader ); commit !=null; commit = readCommit( reader )){
 			if ( count++ >= this.pageRequest.getStart() )
 			{
 				this.commits.add( commit );
